@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Grain texture overlay ── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: -200%;
+  width: 400%;
+  height: 400%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n' x='0' y='0'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  opacity: 0.038;
+  pointer-events: none;
+  z-index: 9999;
+  animation: grain 8s steps(10) infinite;
+}
+
+@keyframes grain {
+  0%, 100% { transform: translate(0, 0); }
+  10%  { transform: translate(-5%, -10%); }
+  20%  { transform: translate(-15%, 5%); }
+  30%  { transform: translate(7%, -25%); }
+  40%  { transform: translate(-5%, 25%); }
+  50%  { transform: translate(-15%, 10%); }
+  60%  { transform: translate(15%, 0%); }
+  70%  { transform: translate(0%, 15%); }
+  80%  { transform: translate(3%, 35%); }
+  90%  { transform: translate(-10%, 10%); }
+}
+
+/* ── Base ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background-color: #FAFAFA;
+  color: #0A0A0A;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #FAFAFA; }
+::-webkit-scrollbar-thumb { background: #1A1A1A; border-radius: 2px; }
+
+/* ── Utilities ── */
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+
+  /* Subtle inner grain on cards */
+  .grain-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.025;
+    pointer-events: none;
+    z-index: 1;
+    border-radius: inherit;
+  }
+}
