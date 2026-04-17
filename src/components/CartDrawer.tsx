@@ -1,12 +1,19 @@
 import { X, Minus, Plus, ShoppingBag, ArrowRight } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useCartStore } from '../store/cartStore'
 
 export default function CartDrawer() {
   const { isOpen, closeCart, items, removeItem, updateQuantity, totalItems, totalPrice } =
     useCartStore()
+  const navigate = useNavigate()
 
   const count = totalItems()
   const total = totalPrice()
+
+  function handleCheckout() {
+    closeCart()
+    navigate('/checkout')
+  }
 
   return (
     <>
@@ -128,17 +135,20 @@ export default function CartDrawer() {
         {items.length > 0 && (
           <div className="px-6 py-5 border-t border-ms-gray-light flex flex-col gap-4">
             <div className="flex justify-between items-center">
-              <span className="font-mono text-xs uppercase tracking-widest text-ms-gray">Total</span>
+              <span className="font-mono text-xs uppercase tracking-widest text-ms-gray">Subtotal</span>
               <span className="font-serif font-bold text-xl text-ms-black">
                 ₱{total.toLocaleString()}
               </span>
             </div>
-            <button className="w-full flex items-center justify-center gap-2 py-4 bg-ms-black text-ms-white font-mono text-xs uppercase tracking-widest hover:bg-ms-charcoal transition-colors active:scale-[0.98]">
-              Checkout
+            <button
+              onClick={handleCheckout}
+              className="w-full flex items-center justify-center gap-2 py-4 bg-ms-black text-ms-white font-mono text-xs uppercase tracking-widest hover:bg-ms-charcoal transition-colors active:scale-[0.98]"
+            >
+              Proceed to Checkout
               <ArrowRight size={14} />
             </button>
             <p className="text-center font-mono text-[9px] uppercase tracking-widest text-ms-gray">
-              Shipping calculated at checkout · Cash on Delivery available
+              Shipping calculated at checkout
             </p>
           </div>
         )}

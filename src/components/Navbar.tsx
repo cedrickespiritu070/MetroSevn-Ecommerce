@@ -29,7 +29,7 @@ export default function Navbar() {
           </button>
 
           {/* Logo — centred on mobile, left on desktop */}
-          <div className="absolute left-1/2 -translate-x-1/2 md:static md:translate-x-0">
+          <div className="absolute left-1/2 -translate-x-1/2 md:static md:translate-x-0 flex items-center">
             <Logo size="sm" />
           </div>
 

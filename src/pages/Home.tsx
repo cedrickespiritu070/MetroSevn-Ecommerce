@@ -1,4 +1,5 @@
 import { ArrowDown } from 'lucide-react'
+import commuteGraphic from '../assets/commute-graphic.jpg'
 import Logo from '../components/Logo'
 import ProductGrid from '../components/ProductGrid'
 import { useProducts } from '../hooks/useProducts'
@@ -22,7 +23,7 @@ export default function Home() {
           <div className="flex flex-col justify-end p-8 md:p-16 pt-28 md:pt-32 bg-ms-white">
             <div className="flex flex-col gap-6">
               <span className="font-mono text-[10px] uppercase tracking-widest2 text-ms-gray">
-                SS 2025 · Manila, PH
+                SS 2025 · The Philippines
               </span>
               <h1 className="font-serif font-black leading-[0.92] text-[clamp(3.5rem,10vw,7rem)] text-ms-black">
                 Metro<br />Sevn.
@@ -52,25 +53,11 @@ export default function Home() {
              * is intended to be placed as a full-bleed background or featured image.
              * Replace the div below with your actual graphic asset.
              */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 select-none">
-              {/* Graphic placeholder — replace with actual <img src="/assets/commute-graphic.png"> */}
-              <p
-                className="font-serif italic font-bold text-center leading-tight"
-                style={{
-                  color: '#FAFAFA',
-                  fontSize: 'clamp(2rem, 5vw, 3.5rem)',
-                  textShadow: '0 2px 20px rgba(0,0,0,0.3)',
-                }}
-              >
-                Commute<br />Pa More!
-              </p>
-              <span
-                className="font-mono text-[9px] uppercase tracking-widest opacity-50"
-                style={{ color: '#FAFAFA' }}
-              >
-                [ Place image_1.png here ]
-              </span>
-            </div>
+            <img
+              src={commuteGraphic}
+              alt="Commute Pa More! — MetroSevn graphic"
+              className="absolute inset-0 w-full h-full object-cover object-center"
+            />
 
             {/* Subtle grain overlay on the blue panel */}
             <div
@@ -98,7 +85,7 @@ export default function Home() {
         >
           {[...Array(6)].map((_, i) => (
             <span key={i} className="font-mono text-[10px] uppercase tracking-widest text-ms-gray px-8">
-              MetroSevn · Streetwear · Manila · SS 2025 · Commute Pa More ·&nbsp;
+              MetroSevn · Streetwear · The Philippines · SS 2025 · Commute Pa More ·&nbsp;
             </span>
           ))}
         </div>
@@ -124,7 +111,7 @@ export default function Home() {
             </h2>
           </div>
           <p className="font-sans text-sm text-ms-gray max-w-sm leading-relaxed md:text-right">
-            Graphic-forward pieces for the streets of Metro Manila.
+            Graphic-forward pieces for the streets of the Philippines.
             Limited quantities. No restocks.
           </p>
         </div>
@@ -147,10 +134,10 @@ export default function Home() {
           }}
         />
         <div className="relative max-w-3xl mx-auto text-center">
-          <Logo inverted size="lg" className="justify-center mb-10" />
+          <Logo inverted size="md" className="mx-auto mb-10" />
           <p className="font-serif italic text-2xl md:text-3xl text-ms-white leading-relaxed font-light">
             "Born from the commute, worn on the streets.<br />
-            Designed in Metro Manila."
+            Proudly made in the Philippines."
           </p>
           <span className="mt-8 block font-mono text-[9px] uppercase tracking-widest text-ms-gray">
             MetroSevn — Est. 2024

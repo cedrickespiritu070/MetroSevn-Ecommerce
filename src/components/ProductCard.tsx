@@ -12,6 +12,7 @@ export default function ProductCard({ product }: ProductCardProps) {
   const [selectedSize, setSelectedSize] = useState<ProductSize | null>(null)
   const [added, setAdded] = useState(false)
   const [sizeError, setSizeError] = useState(false)
+  const [imgError, setImgError] = useState(false)
 
   const handleAddToCart = () => {
     if (!selectedSize) {
@@ -44,29 +45,28 @@ export default function ProductCard({ product }: ProductCardProps) {
           </span>
         )}
 
-        {/* Product image */}
-        <img
-          src={product.image_url}
-          alt={product.name}
-          className="w-full h-full object-cover object-top transition-transform duration-700 group-hover:scale-[1.03]"
-          loading="lazy"
-          onError={(e) => {
-            // Fallback placeholder when image isn't uploaded yet
-            const t = e.currentTarget
-            t.style.display = 'none'
-            t.parentElement?.classList.add('flex', 'items-center', 'justify-center')
-          }}
-        />
+        {/* Product image — shown when loaded successfully */}
+        {!imgError && (
+          <img
+            src={product.image_url}
+            alt={product.name}
+            className="absolute inset-0 w-full h-full object-cover object-top transition-transform duration-700 group-hover:scale-[1.03]"
+            loading="lazy"
+            onError={() => setImgError(true)}
+          />
+        )}
 
-        {/* Image placeholder (shows when no image) */}
-        <div className="absolute inset-0 flex items-center justify-center bg-ms-cream pointer-events-none">
-          <div className="text-center select-none">
-            <span className="font-serif text-4xl font-bold text-ms-gray-light leading-none block">M7</span>
-            <span className="font-mono text-[9px] uppercase tracking-widest text-ms-gray mt-1 block">
-              {product.category}
-            </span>
+        {/* Fallback placeholder — shown only when image fails to load */}
+        {imgError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-ms-cream pointer-events-none">
+            <div className="text-center select-none">
+              <span className="font-serif text-4xl font-bold text-ms-gray-light leading-none block">M7</span>
+              <span className="font-mono text-[9px] uppercase tracking-widest text-ms-gray mt-1 block">
+                {product.category}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Product info */}
