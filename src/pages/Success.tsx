@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, useLocation, Link } from 'react-router-dom'
-import { CheckCircle, ArrowLeft, Package } from 'lucide-react'
+import { CheckCircle, ArrowLeft, Package, Home, Loader2, Printer } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import type { CartItem } from '../types'
 import Logo from '../components/Logo'
@@ -20,6 +20,7 @@ interface Order {
   status: string
   total_amount: number
   currency: string
+  metadata?: { subtotal?: number; shipping_fee?: number }
 }
 
 interface LocationState {
@@ -27,22 +28,34 @@ interface LocationState {
   items: CartItem[]
 }
 
+const POLL_MAX      = 10
+const POLL_INTERVAL = 2000
+
 export default function Success() {
-  const [params]   = useSearchParams()
-  const location   = useLocation()
-  const orderId    = params.get('order_id')
+  const [params]    = useSearchParams()
+  const location    = useLocation()
+  const orderId     = params.get('order_id')
   const routerState = location.state as LocationState | null
 
-  const [order, setOrder]     = useState<Order | null>(routerState?.order ?? null)
-  const [items, setItems]     = useState<OrderItem[]>([])
-  const [loading, setLoading] = useState(!routerState)
+  const sessionRaw  = orderId ? sessionStorage.getItem(`order_${orderId}`) : null
+  const sessionData: LocationState | null = sessionRaw ? JSON.parse(sessionRaw) : null
+  const initialState = routerState ?? sessionData
 
-  // Populate items from router state (guest) or convert cart items
+  // Came from Stripe redirect — webhook fires async so we need to poll
+  const fromStripe = !!initialState
+
+  const [order, setOrder]       = useState<Order | null>(initialState?.order ?? null)
+  const [items, setItems]       = useState<OrderItem[]>([])
+  const [loading, setLoading]   = useState(!initialState?.items)
+  const [verifying, setVerifying] = useState(fromStripe)
+
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
-    if (routerState?.items) {
-      // Map CartItem → display shape (no Supabase fetch needed)
+    // Hydrate items from session/router state immediately (avoids blank receipt flash)
+    if (initialState?.items) {
       setItems(
-        routerState.items.map((i) => ({
+        initialState.items.map((i) => ({
           id:         i.id,
           product_id: i.id,
           quantity:   i.quantity,
@@ -52,32 +65,64 @@ export default function Success() {
         }))
       )
       setLoading(false)
+      if (orderId) sessionStorage.removeItem(`order_${orderId}`)
+    }
+
+    if (!orderId) {
+      setLoading(false)
+      setVerifying(false)
       return
     }
 
-    // Fallback: fetch from Supabase (authenticated users / Stripe redirect)
-    if (!orderId) { setLoading(false); return }
-
-    async function fetchOrder() {
-      const [{ data: orderData }, { data: itemsData }] = await Promise.all([
-        supabase
-          .from('orders')
-          .select('id, created_at, status, total_amount, currency')
-          .eq('id', orderId)
-          .single(),
-        supabase
-          .from('order_items')
-          .select('id, product_id, quantity, unit_price, size, products(name)')
-          .eq('order_id', orderId),
-      ])
-
-      if (orderData) setOrder(orderData)
-      if (itemsData) setItems(itemsData as OrderItem[])
-      setLoading(false)
+    // Fetch items from DB if we don't have them
+    if (!initialState?.items) {
+      supabase
+        .from('order_items')
+        .select('id, product_id, quantity, unit_price, size, products(name)')
+        .eq('order_id', orderId)
+        .then(({ data }) => {
+          if (data) setItems(data as OrderItem[])
+          setLoading(false)
+        })
     }
 
-    fetchOrder()
-  }, [orderId, routerState])
+    // Poll DB until status = 'paid' (webhook fires async after Stripe redirect)
+    let retries = 0
+
+    async function pollOrder() {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('id, created_at, status, total_amount, currency, metadata')
+        .eq('id', orderId!)
+        .single()
+
+      if (data) setOrder(data)
+
+      // Stop on success, max retries, or a hard error (e.g. 406 RLS block)
+      if (data?.status === 'paid' || retries >= POLL_MAX || (error && error.code !== 'PGRST116')) {
+        // If we came from Stripe but couldn't confirm via DB, trust Stripe
+        if (fromStripe && !data) {
+          setOrder((prev) => prev ? { ...prev, status: 'paid' } : null)
+        }
+        setVerifying(false)
+        return
+      }
+
+      if (fromStripe) {
+        retries++
+        pollRef.current = setTimeout(pollOrder, POLL_INTERVAL)
+      } else {
+        setVerifying(false)
+      }
+    }
+
+    pollOrder()
+
+    return () => {
+      if (pollRef.current) clearTimeout(pollRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId])
 
   const shortId = orderId ? orderId.slice(0, 8).toUpperCase() : '--------'
   const date = order
@@ -88,10 +133,14 @@ export default function Success() {
         year: 'numeric', month: 'long', day: 'numeric',
       })
 
+  const displayStatus = verifying ? 'verifying' : (order?.status ?? (fromStripe ? 'paid' : 'pending'))
+  const subtotal   = order?.metadata?.subtotal
+  const shippingFee = order?.metadata?.shipping_fee
+
   return (
     <div className="min-h-screen bg-ms-black flex flex-col items-center justify-center px-4 py-16 relative overflow-hidden">
 
-      {/* Grain overlay on dark bg */}
+      {/* Grain overlay */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
@@ -103,7 +152,7 @@ export default function Success() {
       {/* Receipt card */}
       <div className="relative w-full max-w-md bg-ms-white z-10">
 
-        {/* Receipt top — perforated edge simulation */}
+        {/* Perforated top edge */}
         <div
           className="w-full h-4 bg-ms-white"
           style={{
@@ -120,36 +169,57 @@ export default function Success() {
             <Logo size="sm" />
           </div>
 
-          {/* Divider */}
           <div className="border-t border-dashed border-ms-gray-light my-4" />
 
-          {/* Status */}
-          <div className="flex items-center justify-center gap-2 mb-6">
-            <CheckCircle size={18} className="text-ms-blue" />
+          {/* Payment status banner */}
+          <div className="flex flex-col items-center gap-2 mb-6">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+              verifying ? 'bg-ms-gray-light' : 'bg-ms-blue/10'
+            }`}>
+              {verifying
+                ? <Loader2 size={20} className="text-ms-gray animate-spin" />
+                : <CheckCircle size={20} className="text-ms-blue" />
+              }
+            </div>
             <span className="font-mono text-xs uppercase tracking-widest text-ms-charcoal">
-              Order Confirmed
+              {verifying ? 'Verifying Payment...' : 'Payment Confirmed'}
+            </span>
+            <span className={`font-mono text-[9px] uppercase tracking-widest px-3 py-1 ${
+              verifying ? 'bg-ms-gray-light text-ms-gray' : 'bg-ms-blue/10 text-ms-blue'
+            }`}>
+              {verifying ? '⏳ Processing' : '✓ Paid'}
             </span>
           </div>
 
           {/* Order meta */}
-          <div className="flex flex-col gap-1 mb-6">
-            <div className="flex justify-between">
+          <div className="flex flex-col gap-2.5 mb-6">
+            <div className="flex justify-between items-center">
               <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Order No.</span>
               <span className="font-mono text-xs font-medium text-ms-black"># {shortId}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Date</span>
               <span className="font-mono text-xs text-ms-charcoal">{date}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Status</span>
-              <span className="font-mono text-xs uppercase tracking-widest text-ms-blue">
-                {order?.status ?? 'Pending'}
+              <span className={`font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 inline-flex items-center gap-1 ${
+                verifying
+                  ? 'text-ms-gray'
+                  : displayStatus === 'paid'
+                  ? 'bg-ms-blue/10 text-ms-blue'
+                  : 'text-ms-gray'
+              }`}>
+                {verifying && <Loader2 size={8} className="animate-spin" />}
+                {verifying ? 'Verifying' : displayStatus}
               </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Payment</span>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-ms-charcoal">Card</span>
             </div>
           </div>
 
-          {/* Divider */}
           <div className="border-t border-dashed border-ms-gray-light my-4" />
 
           {/* Line items */}
@@ -168,7 +238,7 @@ export default function Success() {
                 <li key={item.id} className="flex items-start justify-between gap-2">
                   <div className="flex flex-col">
                     <span className="font-sans text-xs text-ms-black leading-snug">
-                      {item.products?.[0]?.name ?? `Product ${item.product_id.slice(0,6)}`}
+                      {item.products?.[0]?.name ?? `Product ${item.product_id.slice(0, 6)}`}
                     </span>
                     <span className="font-mono text-[9px] text-ms-gray uppercase tracking-widest mt-0.5">
                       Size: {item.size} · Qty: {item.quantity}
@@ -187,8 +257,31 @@ export default function Success() {
             </div>
           )}
 
-          {/* Divider */}
           <div className="border-t border-dashed border-ms-gray-light my-4" />
+
+          {/* Order breakdown */}
+          <div className="flex flex-col gap-2 mb-1">
+            {subtotal !== undefined && (
+              <div className="flex justify-between items-center">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Subtotal</span>
+                <span className="font-mono text-xs text-ms-charcoal">₱{subtotal.toLocaleString()}</span>
+              </div>
+            )}
+            {shippingFee !== undefined && (
+              <div className="flex justify-between items-center">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Shipping Fee</span>
+                {shippingFee === 0 ? (
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-ms-blue">Free</span>
+                ) : (
+                  <span className="font-mono text-xs text-ms-charcoal">₱{shippingFee.toLocaleString()}</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {(subtotal !== undefined || shippingFee !== undefined) && (
+            <div className="border-t border-dashed border-ms-gray-light my-3" />
+          )}
 
           {/* Total */}
           <div className="flex justify-between items-center">
@@ -198,7 +291,6 @@ export default function Success() {
             </span>
           </div>
 
-          {/* Divider */}
           <div className="border-t border-dashed border-ms-gray-light my-6" />
 
           {/* Thank you */}
@@ -209,17 +301,33 @@ export default function Success() {
             MetroSevn · The Philippines
           </p>
 
-          {/* CTA */}
-          <Link
-            to="/"
-            className="mt-8 flex items-center justify-center gap-2 w-full py-3 bg-ms-black text-ms-white font-mono text-[10px] uppercase tracking-widest hover:bg-ms-charcoal transition-colors"
-          >
-            <ArrowLeft size={12} />
-            Continue Shopping
-          </Link>
+          {/* CTAs */}
+          <div className="flex flex-col gap-2 mt-8">
+            <Link
+              to="/"
+              className="flex items-center justify-center gap-2 w-full py-3.5 bg-ms-black text-ms-white font-mono text-[10px] uppercase tracking-widest hover:bg-ms-charcoal transition-colors"
+            >
+              <Home size={12} />
+              Return to Home
+            </Link>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center justify-center gap-2 w-full py-3 border border-ms-gray-light text-ms-charcoal font-mono text-[10px] uppercase tracking-widest hover:border-ms-black transition-colors"
+            >
+              <Printer size={12} />
+              Print Receipt
+            </button>
+            <Link
+              to="/"
+              className="flex items-center justify-center gap-2 w-full py-3 border border-ms-gray-light text-ms-charcoal font-mono text-[10px] uppercase tracking-widest hover:border-ms-black transition-colors"
+            >
+              <ArrowLeft size={12} />
+              Continue Shopping
+            </Link>
+          </div>
         </div>
 
-        {/* Receipt bottom — perforated edge */}
+        {/* Perforated bottom edge */}
         <div
           className="w-full h-4 bg-ms-white"
           style={{
@@ -230,7 +338,7 @@ export default function Success() {
         />
       </div>
 
-      {/* Full order ID below receipt */}
+      {/* Full order ref */}
       {orderId && (
         <p className="mt-6 font-mono text-[9px] text-ms-gray uppercase tracking-widest z-10">
           Ref: {orderId}

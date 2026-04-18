@@ -1,24 +1,80 @@
-import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, Loader2, Package, ChevronRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowLeft, Loader2, ChevronRight, Package } from 'lucide-react'
 import { useCartStore } from '../store/cartStore'
 import { useCheckout, SHIPPING_FEE, FREE_SHIPPING_THRESHOLD } from '../hooks/useCheckout'
 import type { ShippingDetails } from '../hooks/useCheckout'
 import Logo from '../components/Logo'
+import { supabase } from '../lib/supabase'
+
+// ── Validation ───────────────────────────────────────────────────────────────
+type FormErrors = Partial<Record<keyof ShippingDetails, string>>
+
+const FIELD_LABELS: Record<keyof ShippingDetails, string> = {
+  fullName:   'Full name',
+  email:      'Email address',
+  phone:      'Phone number',
+  street:     'Street address',
+  barangay:   'Barangay',
+  city:       'City / Municipality',
+  province:   'Province',
+  postalCode: 'Postal code',
+}
+
+function validateField(name: keyof ShippingDetails, value: string): string {
+  if (!value.trim()) return `${FIELD_LABELS[name]} is required`
+  if (name === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    return 'Enter a valid email address'
+  }
+  if (name === 'phone') {
+    const digits = value.replace(/\D/g, '')
+    if (digits.length < 10 || (digits.startsWith('63') && digits.length !== 12)) {
+      return 'Enter a valid PH number (e.g. +63 912 345 6789)'
+    }
+  }
+  if (name === 'postalCode' && !/^\d{4}$/.test(value.trim())) {
+    return 'Enter a valid 4-digit postal code'
+  }
+  return ''
+}
+
+function validateAll(form: ShippingDetails): FormErrors {
+  const errs: FormErrors = {}
+  for (const key of Object.keys(form) as Array<keyof ShippingDetails>) {
+    const msg = validateField(key, form[key])
+    if (msg) errs[key] = msg
+  }
+  return errs
+}
+
+// ── Phone formatter ──────────────────────────────────────────────────────────
+function formatPhone(raw: string): string {
+  let digits = raw.replace(/\D/g, '')
+  if (digits.startsWith('0')) digits = '63' + digits.slice(1)
+  if (!digits.startsWith('63') && digits.length > 0) digits = '63' + digits
+  const local = digits.slice(2, 12) // max 10 local digits
+  let out = '+63'
+  if (local.length > 0) out += ' ' + local.slice(0, 3)
+  if (local.length > 3) out += ' ' + local.slice(3, 6)
+  if (local.length > 6) out += ' ' + local.slice(6, 10)
+  return out
+}
 
 // ── Reusable underline-style input ──────────────────────────────────────────
 interface FieldProps {
-  label: string
-  name: keyof ShippingDetails
-  value: string
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
-  type?: string
+  label:      string
+  name:       keyof ShippingDetails
+  value:      string
+  onChange:   (e: React.ChangeEvent<HTMLInputElement>) => void
+  onBlur:     (name: keyof ShippingDetails) => void
+  type?:      string
   placeholder?: string
-  required?: boolean
-  half?: boolean
+  required?:  boolean
+  half?:      boolean
+  error?:     string
 }
 
-function Field({ label, name, value, onChange, type = 'text', placeholder, required = true, half }: FieldProps) {
+function Field({ label, name, value, onChange, onBlur, type = 'text', placeholder, required = true, half, error }: FieldProps) {
   return (
     <div className={half ? 'col-span-1' : 'col-span-2'}>
       <label className="block font-mono text-[10px] uppercase tracking-widest text-ms-gray mb-1">
@@ -29,10 +85,20 @@ function Field({ label, name, value, onChange, type = 'text', placeholder, requi
         name={name}
         value={value}
         onChange={onChange}
+        onBlur={() => onBlur(name)}
         placeholder={placeholder}
         required={required}
-        className="w-full bg-transparent border-b border-ms-gray-light focus:border-ms-black outline-none py-2.5 font-sans text-sm text-ms-black placeholder:text-ms-gray transition-colors duration-150"
+        className={`w-full bg-transparent border-b ${
+          error
+            ? 'border-red-400 focus:border-red-500'
+            : 'border-ms-gray-light focus:border-ms-black'
+        } outline-none py-2.5 font-sans text-sm text-ms-black placeholder:text-ms-gray transition-colors duration-150`}
       />
+      {error && (
+        <p className="font-mono text-[9px] uppercase tracking-widest text-red-500 mt-1.5">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
@@ -50,27 +116,53 @@ const EMPTY_FORM: ShippingDetails = {
 }
 
 export default function Checkout() {
-  const { items, totalPrice } = useCartStore()
+  const { items, totalPrice, clearCart } = useCartStore()
   const { checkout, loading }  = useCheckout()
-  const navigate               = useNavigate()
+  const navigate = useNavigate()
 
-  const [form, setForm]     = useState<ShippingDetails>(EMPTY_FORM)
+  const [form, setForm]         = useState<ShippingDetails>(EMPTY_FORM)
+  const [errors, setErrors]     = useState<FormErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
+
+  // Silently redirect to shop if cart is empty — no dead-end screen
+  useEffect(() => {
+    if (items.length === 0) navigate('/', { replace: true })
+  }, [items.length, navigate])
 
   const subtotal    = totalPrice()
   const shippingFee = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE
   const total       = subtotal + shippingFee
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+    const { name, value } = e.target
+    const fieldName = name as keyof ShippingDetails
+
+    const formatted = fieldName === 'phone' ? formatPhone(value) : value
+    setForm((prev) => ({ ...prev, [fieldName]: formatted }))
+
+    // Clear error for this field as user types
+    if (errors[fieldName]) {
+      setErrors((prev) => ({ ...prev, [fieldName]: undefined }))
+    }
+  }
+
+  function handleBlur(name: keyof ShippingDetails) {
+    const msg = validateField(name, form[name])
+    setErrors((prev) => ({ ...prev, [name]: msg || undefined }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setFormError(null)
 
-    // Capture items before checkout clears the cart
-    const snapshot = items.map((i) => ({ ...i }))
+    const validationErrors = validateAll(form)
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors)
+      // Scroll to first error
+      const firstErrorField = document.querySelector('[data-invalid]') as HTMLElement
+      firstErrorField?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
 
     const { orderId, totalAmount, error } = await checkout(form)
 
@@ -79,42 +171,31 @@ export default function Checkout() {
       return
     }
 
-    // TODO: Replace with Stripe Edge Function call
-    // const { url } = await createStripeSession({ orderId, totalAmount })
-    // window.location.href = url
-    console.log('[MetroSevn] Order ready for payment:', { orderId, total: totalAmount })
-
-    // Pass order data via router state — Success page uses this directly
-    // so it never needs to SELECT from Supabase (no anon SELECT policy needed)
-    navigate(`/success?order_id=${orderId}`, {
-      state: {
-        order: {
-          id:           orderId,
-          created_at:   new Date().toISOString(),
-          status:       'pending',
-          total_amount: totalAmount,
-          currency:     'PHP',
-        },
-        items: snapshot,
-      },
+    const { data, error: fnError } = await supabase.functions.invoke('create-checkout-session', {
+      body: { orderId, total: totalAmount },
     })
+
+    if (fnError || !data?.url) {
+      setFormError(fnError?.message ?? 'Failed to create payment session. Please try again.')
+      return
+    }
+
+    sessionStorage.setItem(`order_${orderId}`, JSON.stringify({
+      order: {
+        id:           orderId,
+        created_at:   new Date().toISOString(),
+        status:       'pending',
+        total_amount: totalAmount,
+        currency:     'PHP',
+      },
+      items: items.map((i) => ({ ...i })),
+    }))
+
+    clearCart()
+    window.location.assign(data.url)
   }
 
-  // Guard — if cart is empty, redirect home
-  if (items.length === 0) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4">
-        <Package size={36} className="text-ms-gray-light" />
-        <p className="font-serif font-semibold text-ms-charcoal text-lg">Your cart is empty.</p>
-        <Link
-          to="/"
-          className="font-mono text-xs uppercase tracking-widest underline underline-offset-4 text-ms-charcoal hover:text-ms-blue transition-colors"
-        >
-          Back to Shop
-        </Link>
-      </div>
-    )
-  }
+
 
   return (
     <div className="min-h-screen bg-ms-white relative">
@@ -171,9 +252,24 @@ export default function Checkout() {
                 Contact Information
               </h2>
               <div className="grid grid-cols-2 gap-x-6 gap-y-6">
-                <Field label="Full Name"     name="fullName" value={form.fullName} onChange={handleChange} placeholder="Juan dela Cruz" />
-                <Field label="Email Address" name="email"    value={form.email}    onChange={handleChange} type="email" placeholder="juan@email.com" half />
-                <Field label="Phone Number"  name="phone"    value={form.phone}    onChange={handleChange} type="tel"   placeholder="+63 9XX XXX XXXX" half />
+                <Field
+                  label="Full Name"     name="fullName" value={form.fullName}
+                  onChange={handleChange} onBlur={handleBlur}
+                  placeholder="Juan dela Cruz"
+                  error={errors.fullName}
+                />
+                <Field
+                  label="Email Address" name="email"    value={form.email}
+                  onChange={handleChange} onBlur={handleBlur}
+                  type="email" placeholder="juan@email.com" half
+                  error={errors.email}
+                />
+                <Field
+                  label="Phone Number"  name="phone"    value={form.phone}
+                  onChange={handleChange} onBlur={handleBlur}
+                  type="tel" placeholder="+63 912 345 6789" half
+                  error={errors.phone}
+                />
               </div>
             </section>
 
@@ -183,15 +279,40 @@ export default function Checkout() {
                 Shipping Address
               </h2>
               <div className="grid grid-cols-2 gap-x-6 gap-y-6">
-                <Field label="Street / House No. / Bldg" name="street"     value={form.street}     onChange={handleChange} placeholder="123 Rizal Street" />
-                <Field label="Barangay"                  name="barangay"   value={form.barangay}   onChange={handleChange} placeholder="Brgy. San Sebastian" half />
-                <Field label="City / Municipality"       name="city"       value={form.city}       onChange={handleChange} placeholder="Lipa City" half />
-                <Field label="Province"                  name="province"   value={form.province}   onChange={handleChange} placeholder="Batangas" half />
-                <Field label="Postal Code"               name="postalCode" value={form.postalCode} onChange={handleChange} placeholder="4217" half />
+                <Field
+                  label="Street / House No. / Bldg" name="street" value={form.street}
+                  onChange={handleChange} onBlur={handleBlur}
+                  placeholder="123 Rizal Street"
+                  error={errors.street}
+                />
+                <Field
+                  label="Barangay" name="barangay" value={form.barangay}
+                  onChange={handleChange} onBlur={handleBlur}
+                  placeholder="Brgy. San Sebastian" half
+                  error={errors.barangay}
+                />
+                <Field
+                  label="City / Municipality" name="city" value={form.city}
+                  onChange={handleChange} onBlur={handleBlur}
+                  placeholder="Lipa City" half
+                  error={errors.city}
+                />
+                <Field
+                  label="Province" name="province" value={form.province}
+                  onChange={handleChange} onBlur={handleBlur}
+                  placeholder="Batangas" half
+                  error={errors.province}
+                />
+                <Field
+                  label="Postal Code" name="postalCode" value={form.postalCode}
+                  onChange={handleChange} onBlur={handleBlur}
+                  placeholder="4217" half
+                  error={errors.postalCode}
+                />
               </div>
             </section>
 
-            {/* Error */}
+            {/* General error */}
             {formError && (
               <p className="font-mono text-xs text-red-500 mb-6 border border-red-200 px-4 py-3 bg-red-50">
                 {formError}
@@ -260,14 +381,14 @@ export default function Checkout() {
                 ))}
               </ul>
 
-              {/* Totals */}
+              {/* Totals breakdown */}
               <div className="px-6 py-4 border-t border-ms-gray-light flex flex-col gap-2.5">
                 <div className="flex justify-between">
                   <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Subtotal</span>
                   <span className="font-mono text-xs text-ms-charcoal">₱{subtotal.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Shipping</span>
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-ms-gray">Shipping Fee</span>
                   {shippingFee === 0 ? (
                     <span className="font-mono text-xs text-ms-blue uppercase tracking-widest">Free</span>
                   ) : (
@@ -282,7 +403,9 @@ export default function Checkout() {
                 )}
 
                 <div className="flex justify-between pt-2 border-t border-ms-gray-light mt-1">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-ms-charcoal">Total</span>
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-ms-charcoal font-medium">
+                    Total
+                  </span>
                   <span className="font-serif font-bold text-lg text-ms-black">
                     ₱{total.toLocaleString()}
                   </span>

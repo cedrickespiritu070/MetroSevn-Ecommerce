@@ -30,7 +30,7 @@ export const FREE_SHIPPING_THRESHOLD   = 2500  // PHP — free above this subtot
  */
 export function useCheckout() {
   const [loading, setLoading] = useState(false)
-  const { items, totalPrice, clearCart } = useCartStore()
+  const { items, totalPrice } = useCartStore()
 
   async function checkout(shipping: ShippingDetails): Promise<CheckoutResult> {
     if (items.length === 0) {
@@ -82,9 +82,6 @@ export function useCheckout() {
         )
 
       if (itemsError) throw new Error(itemsError.message)
-
-      // ── 3. Clear cart ────────────────────────────────────────────────────
-      clearCart()
 
       return { orderId, totalAmount: total, error: null }
 
